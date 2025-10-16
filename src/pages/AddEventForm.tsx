@@ -3,8 +3,9 @@ import { View, Text, StyleSheet, TextInput, Alert, Image, Platform } from "react
 import { RectButton } from "react-native-gesture-handler";
 import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import * as ImagePicker from "expo-image-picker";
+import * as FileSystem from "expo-file-system/legacy";
 import { API_BASE } from "../constants/Api";
-import { uploadImage as uploadToImgBB } from "../services/imageApi";
+import { uploadImage } from "../services/imageApi";
 
 export default function AddEventForm({ route, navigation }: any) {
   const { position } = route.params || {};
@@ -17,6 +18,7 @@ export default function AddEventForm({ route, navigation }: any) {
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [imagePreviewUri, setImagePreviewUri] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageMeta, setImageMeta] = useState<{ name: string; sizeKB: number } | null>(null);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
 
@@ -45,17 +47,44 @@ export default function AddEventForm({ route, navigation }: any) {
     return true;
   };
 
+  const getFileNameFromUri = (uri: string) => {
+    try {
+      const parts = uri.split(/[\\/]/);
+      return parts[parts.length - 1] || "selected_image.jpg";
+    } catch {
+      return "selected_image.jpg";
+    }
+  };
+
   const handleImagePicked = async (asset: any) => {
     try {
       setUploading(true);
-      const base64 = asset.base64?.split(",").pop();
-      const res = await uploadToImgBB(base64);
+      setImagePreviewUri(asset.uri);
+
+      // get file info
+      const info = await FileSystem.getInfoAsync(asset.uri);
+      const sizeKB =
+        info && typeof (info as any).size === "number" ? Number(((info as any).size / 1024).toFixed(2)) : 0;
+      const name = asset.fileName ?? getFileNameFromUri(asset.uri);
+
+      let base64: string | undefined = asset.base64;
+      if (base64 && base64.includes(",")) {
+        base64 = base64.split(",").pop();
+      }
+      if (!base64) {
+        base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: "base64" as any });
+      }
+
+      const res = await uploadImage(base64);
       const url = res?.data?.data?.url;
       if (!url) throw new Error("No URL returned");
+
       setImageUrl(url);
-      setImagePreviewUri(asset.uri);
+      setImageMeta({ name, sizeKB });
     } catch {
       Alert.alert("Upload failed", "Could not upload image.");
+      setImageUrl(null);
+      setImageMeta(null);
     } finally {
       setUploading(false);
     }
@@ -182,10 +211,14 @@ export default function AddEventForm({ route, navigation }: any) {
           </RectButton>
         </View>
         {uploading && <Text style={{ color: "#007AFF" }}>Uploading...</Text>}
+
         {imageUrl && (
           <View style={styles.thumbRow}>
             <Image source={{ uri: imagePreviewUri ?? imageUrl }} style={styles.thumb} />
-            <Text style={styles.fileName}>Image uploaded</Text>
+            <View>
+              <Text style={styles.fileName}>{imageMeta?.name}</Text>
+              <Text style={styles.fileMeta}>{imageMeta?.sizeKB ?? 0} KB</Text>
+            </View>
           </View>
         )}
 
@@ -216,6 +249,7 @@ const styles = StyleSheet.create({
   thumbRow: { flexDirection: "row", alignItems: "center", marginTop: 10, gap: 12 },
   thumb: { width: 80, height: 60, borderRadius: 8 },
   fileName: { color: "#555" },
+  fileMeta: { color: "#777" }, // added
   saveBtn: {
     backgroundColor: "#00A3FF",
     height: 52,
